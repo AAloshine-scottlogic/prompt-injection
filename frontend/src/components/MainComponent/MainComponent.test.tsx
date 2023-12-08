@@ -1,12 +1,11 @@
 import { render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterAll, describe, expect, test, vi } from 'vitest';
 
 import { LEVEL_NAMES } from '@src/models/level';
 
 import MainComponent from './MainComponent';
 
 describe('MainComponent component tests', () => {
-	// mock the health check service call
 	const { mockHealthCheck } = vi.hoisted(() => {
 		return { mockHealthCheck: vi.fn() };
 	});
@@ -14,14 +13,37 @@ describe('MainComponent component tests', () => {
 		healthCheck: mockHealthCheck.mockResolvedValue({}),
 	}));
 
-	vi.mock('@src/service/emailService', () => ({
-		getSentEmails: vi.fn().mockResolvedValue([]),
-	}));
-	vi.mock('@src/service/chatService', () => ({
-		getChatHistory: vi.fn().mockResolvedValue([]),
-	}));
+	vi.mock('@src/service/chatService', async (importOriginal) => {
+		const mod = await importOriginal<
+			typeof import('@src/service/chatService')
+		>();
+		return {
+			...mod,
+			getChatHistory: vi.fn().mockResolvedValue([]),
+		};
+	});
 
-	afterEach(() => {
+	vi.mock('@src/service/defenceService', async (importOriginal) => {
+		const mod = await importOriginal<
+			typeof import('@src/service/defenceService')
+		>();
+		return {
+			...mod,
+			getDefences: vi.fn().mockResolvedValue([]),
+		};
+	});
+
+	vi.mock('@src/service/emailService', async (importOriginal) => {
+		const mod = await importOriginal<
+			typeof import('@src/service/emailService')
+		>();
+		return {
+			...mod,
+			getSentEmails: vi.fn().mockResolvedValue([]),
+		};
+	});
+
+	afterAll(() => {
 		vi.resetAllMocks();
 	});
 
@@ -58,10 +80,9 @@ describe('MainComponent component tests', () => {
 
 		renderMainComponent();
 
-		expect(
-			await screen.findByText(
-				'Failed to reach the server. Please try again later.'
-			)
-		).not.toBeInTheDocument();
+		// expect the findByText to throw
+		await expect(
+			screen.findByText('Failed to reach the server. Please try again later.')
+		).rejects.toThrow();
 	});
 });
