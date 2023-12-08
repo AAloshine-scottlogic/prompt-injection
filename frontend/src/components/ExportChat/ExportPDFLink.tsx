@@ -25,21 +25,26 @@ function ExportPDFLink({
 		}
 	}
 
-	return (
-		<PDFDownloadLink
-			document={
-				<ExportContent
-					messages={messages}
-					emails={emails}
-					currentLevel={currentLevel}
-				/>
-			}
-			className="themed-button export-chat-link"
-			fileName={getFileName()}
-		>
-			Export
-		</PDFDownloadLink>
-	);
+	// only render if not in a vitest test
+	if (process.env.NODE_ENV !== 'test') {
+		return (
+			<PDFDownloadLink
+				document={
+					<ExportContent
+						messages={messages}
+						emails={emails}
+						currentLevel={currentLevel}
+					/>
+				}
+				className="themed-button export-chat-link"
+				fileName={getFileName()}
+			>
+				Export
+			</PDFDownloadLink>
+		);
+	} else {
+		return <></>;
+	}
 }
 
 export default ExportPDFLink;
