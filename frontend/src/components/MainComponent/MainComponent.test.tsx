@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { afterAll, afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { LEVEL_NAMES } from '@src/models/level';
 
