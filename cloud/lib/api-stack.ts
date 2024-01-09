@@ -74,7 +74,7 @@ export class ApiStack extends Stack {
 					image: ContainerImage.fromDockerImageAsset(dockerImageAsset),
 					containerPort,
 					environment: {
-						NODE_ENV: 'development',
+						NODE_ENV: 'production',
 						PORT: `${containerPort}`,
 						CORS_ALLOW_ORIGIN: webappUrl,
 					},

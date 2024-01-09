@@ -36,26 +36,27 @@ app.use(express.json());
 // use session storage - currently in-memory, but in future use Redis in prod builds
 const maxAge = 60 * 60 * 1000 * (isProd ? 1 : 8); //1 hour in prod, 8hrs in dev
 const sessionOpts: session.SessionOptions = {
-	store: new (memoryStoreFactory(session))({
-		checkPeriod: maxAge,
-	}),
-	secret: sessionSigningSecret,
 	name: 'prompt-injection.sid',
 	resave: false,
 	saveUninitialized: true,
+	secret: sessionSigningSecret,
+	store: new (memoryStoreFactory(session))({
+		checkPeriod: maxAge,
+	}),
 	cookie: {
-		secure: isProd,
 		maxAge,
+		// Different domains for UI and API in AWS, until we buy a domain...
+		sameSite: isProd ? 'lax' : 'strict',
+		secure: isProd,
 	},
 };
 
 app.use(session(sessionOpts));
 
-const allowOrigin = process.env.CORS_ALLOW_ORIGIN || '*';
 app.use(
 	cors({
-		origin: allowOrigin,
-		credentials: allowOrigin !== '*',
+		origin: process.env.CORS_ALLOW_ORIGIN,
+		credentials: true,
 	})
 );
 
