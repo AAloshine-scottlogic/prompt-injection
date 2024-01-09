@@ -1,5 +1,7 @@
 import {
 	AllowedMethods,
+	CacheCookieBehavior,
+	CachePolicy,
 	Distribution,
 	OriginAccessIdentity,
 	SecurityPolicyProtocol,
@@ -54,6 +56,7 @@ export class UiStack extends Stack {
 		);
 
 		//CloudFront
+		const cachePolicyName = generateResourceName('site-cache-policy');
 		const cloudFront = new Distribution(
 			this,
 			generateResourceName('site-distribution'),
@@ -71,6 +74,10 @@ export class UiStack extends Stack {
 				defaultBehavior: {
 					origin: new S3Origin(hostBucket, {
 						originAccessIdentity: cloudfrontOAI,
+					}),
+					cachePolicy: new CachePolicy(this, cachePolicyName, {
+						cachePolicyName,
+						cookieBehavior: CacheCookieBehavior.allowList('prompt-injection.sid'),
 					}),
 					compress: true,
 					allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,

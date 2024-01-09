@@ -154,7 +154,7 @@ export class ApiStack extends Stack {
 		});
 
 		new CfnOutput(this, 'APIGatewayURL', {
-			value: api.defaultStage!.url,
+			value: api.defaultStage?.url ?? 'FATAL ERROR: Gateway does not have a default stage',
 		});
 	}
 }

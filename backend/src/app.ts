@@ -46,7 +46,7 @@ const sessionOpts: session.SessionOptions = {
 	cookie: {
 		maxAge,
 		// Different domains for UI and API in AWS, until we buy a domain...
-		sameSite: isProd ? 'lax' : 'strict',
+		sameSite: isProd ? 'none' : 'strict',
 		secure: isProd,
 	},
 };
