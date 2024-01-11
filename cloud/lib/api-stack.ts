@@ -138,9 +138,11 @@ export class ApiStack extends Stack {
 			apiName,
 			description: generateResourceDescription('API'),
 			corsPreflight: {
-				allowHeaders: ['X-Forwarded-For', 'Content-Type', 'Authorization'],
 				allowOrigins: [webappUrl],
-				allowMethods: [CorsHttpMethod.ANY], // TODO Mention this in blog!
+				// TODO Mention all these in blog?
+				allowMethods: [CorsHttpMethod.ANY],
+				allowHeaders: ['X-Forwarded-For', 'X-Forwarded-Proto', 'Content-Type', 'Cookie'],
+				exposeHeaders: ['Set-Cookie'],
 				allowCredentials: true,
 			},
 		});
