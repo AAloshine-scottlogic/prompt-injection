@@ -1,19 +1,26 @@
-import { CorsHttpMethod, HttpApi, VpcLink } from 'aws-cdk-lib/aws-apigatewayv2';
-import { HttpAlbIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import {
+	ConnectionType,
+	Cors,
+	Integration,
+	IntegrationType,
+	MethodLoggingLevel,
+	RestApi,
+	VpcLink
+} from 'aws-cdk-lib/aws-apigateway';
 //import { UserPool, UserPoolClient, UserPoolDomain, } from 'aws-cdk-lib/aws-cognito';
-import { Vpc } from 'aws-cdk-lib/aws-ec2';
+import { SecurityGroup, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { DockerImageAsset } from 'aws-cdk-lib/aws-ecr-assets';
 import { Cluster, ContainerImage, PropagatedTagSource, Secret as EnvSecret, } from 'aws-cdk-lib/aws-ecs';
 import { ApplicationLoadBalancedFargateService } from 'aws-cdk-lib/aws-ecs-patterns';
-//import { ListenerAction } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
-//import { AuthenticateCognitoAction } from 'aws-cdk-lib/aws-elasticloadbalancingv2-actions';
+import { NetworkLoadBalancer } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { AlbTarget } from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import { CfnOutput, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import { join } from 'node:path';
 
-import { resourceDescription, resourceName } from './resourceNamingUtils';
+import { resourceName, stageName } from './resourceNamingUtils';
 
 type ApiStackProps = StackProps & {
 	// userPool: UserPool;
@@ -31,7 +38,6 @@ export class ApiStack extends Stack {
 		const { /*userPool, userPoolClient, userPoolDomain,*/ webappUrl } = props;
 
 		const generateResourceName = resourceName(scope);
-		const generateResourceDescription = resourceDescription(scope);
 
 		const dockerImageAsset = new DockerImageAsset(
 			this,
@@ -59,8 +65,9 @@ export class ApiStack extends Stack {
 
 		// Create a private, application-load-balanced Fargate service
 		const containerPort = 3001;
+		const healthCheckPath = '/health';
 		const fargateServiceName = generateResourceName('fargate');
-		const loadBalancerName = generateResourceName('loadbalancer');
+		const loadBalancerName = generateResourceName('alb');
 		const loadBalancerLogName = generateResourceName('loadbalancer-logs');
 		const fargateService = new ApplicationLoadBalancedFargateService(
 			this,
@@ -96,7 +103,7 @@ export class ApiStack extends Stack {
 			}
 		);
 		fargateService.targetGroup.configureHealthCheck({
-			path: '/health',
+			path: healthCheckPath,
 		});
 		fargateService.loadBalancer.logAccessLogs(
 			new Bucket(this, loadBalancerLogName, {
@@ -105,7 +112,6 @@ export class ApiStack extends Stack {
 				removalPolicy: RemovalPolicy.DESTROY,
 			})
 		);
-		//this.loadBalancerUrl = `http://${fargateService.loadBalancer.loadBalancerDnsName}`;
 
 		// Hook up Cognito to load balancer
 		// https://stackoverflow.com/q/71124324
@@ -122,41 +128,70 @@ export class ApiStack extends Stack {
 			}),
 		});
 		*/
+		//this.loadBalancerUrl = `https://${fargateService.loadBalancer.loadBalancerDnsName}`;
 
-		// Create an HTTP APIGateway with a VPCLink integrated with our load balancer
+		// Create network loadbalancer targeting our application loadbalancer
+		const nlbName = generateResourceName('nlb')
+		const nlbSGName = generateResourceName('nlb-secgroup')
+		const nlbListenerName = generateResourceName('nlb-listener');
+		const nlbTargetName = generateResourceName('nlb-targets');
+		const nlb = new NetworkLoadBalancer(this, nlbName, {
+			loadBalancerName: nlbName,
+			vpc,
+			crossZoneEnabled: true,
+			securityGroups: [
+				new SecurityGroup(this, nlbSGName, {
+					vpc,
+					securityGroupName: nlbSGName,
+				})
+			],
+		});
+		const nlbListener = nlb.addListener(nlbListenerName, { port: 80 });
+		nlbListener.addTargets(nlbTargetName, {
+			targets: [new AlbTarget(fargateService.loadBalancer, 80)],
+			port: 80,
+			healthCheck: {
+				path: healthCheckPath,
+			},
+		});
+
+		// Create an HTTP APIGateway with a VPCLink integrated with our network load balancer
 		const vpcLinkName = generateResourceName('vpclink');
 		const vpcLink = new VpcLink(this, vpcLinkName, {
-			vpc,
 			vpcLinkName,
+			targets: [nlb],
 		});
 		Object.entries(props.tags ?? {}).forEach(([key, value]) => {
 			Tags.of(vpcLink).add(key, value);
 		});
 
 		const apiName = generateResourceName('api');
-		const api = new HttpApi(this, apiName, {
-			apiName,
-			description: generateResourceDescription('API'),
-			corsPreflight: {
-				allowOrigins: [webappUrl],
-				// TODO Mention all these in blog?
-				allowMethods: [CorsHttpMethod.ANY],
-				allowHeaders: ['X-Forwarded-For', 'X-Forwarded-Proto', 'Content-Type', 'Cookie'],
-				exposeHeaders: ['Set-Cookie'],
-				allowCredentials: true,
+		const api = new RestApi(this, apiName, {
+			restApiName: apiName,
+			deployOptions: {
+				stageName: stageName(scope),
+				loggingLevel: MethodLoggingLevel.INFO,
+				dataTraceEnabled: true, // TODO Turn off once tested
 			},
 		});
-		api.addRoutes({
-			path: '/{proxy+}',
-			integration: new HttpAlbIntegration(
-				generateResourceName('api-integration'),
-				fargateService.loadBalancer.listeners[0],
-				{ vpcLink },
-			),
+		api.root.addProxy({
+			defaultIntegration: new Integration({
+				type: IntegrationType.HTTP_PROXY,
+				integrationHttpMethod: 'ANY',
+				options: {
+					connectionType: ConnectionType.VPC_LINK,
+					vpcLink,
+				},
+			}),
+		}).addCorsPreflight({
+			allowOrigins: [webappUrl],
+			allowMethods: Cors.ALL_METHODS,
+			// TODO Might not need the cookie headers, if allowCredentials=true
+			allowHeaders: ['X-Forwarded-For', 'X-Forwarded-Proto', 'Content-Type', 'Cookie'],
+			exposeHeaders: ['Set-Cookie'],
+			allowCredentials: true, // TODO Mention this in blog?
 		});
 
-		new CfnOutput(this, 'APIGatewayURL', {
-			value: api.defaultStage?.url ?? 'FATAL ERROR: Gateway does not have a default stage',
-		});
+		new CfnOutput(this, 'APIGatewayURL', { value: api.url });
 	}
 }
