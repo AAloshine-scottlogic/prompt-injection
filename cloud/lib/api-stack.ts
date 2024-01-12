@@ -3,12 +3,12 @@ import {
 	Cors,
 	Integration,
 	IntegrationType,
-	MethodLoggingLevel,
+	PassthroughBehavior,
 	RestApi,
 	VpcLink
 } from 'aws-cdk-lib/aws-apigateway';
 //import { UserPool, UserPoolClient, UserPoolDomain, } from 'aws-cdk-lib/aws-cognito';
-import { SecurityGroup, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { Peer, Port, SecurityGroup, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { DockerImageAsset } from 'aws-cdk-lib/aws-ecr-assets';
 import { Cluster, ContainerImage, PropagatedTagSource, Secret as EnvSecret, } from 'aws-cdk-lib/aws-ecs';
 import { ApplicationLoadBalancedFargateService } from 'aws-cdk-lib/aws-ecs-patterns';
@@ -16,7 +16,7 @@ import { NetworkLoadBalancer } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { AlbTarget } from 'aws-cdk-lib/aws-elasticloadbalancingv2-targets';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
-import { CfnOutput, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib/core';
+import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import { join } from 'node:path';
 
@@ -132,26 +132,31 @@ export class ApiStack extends Stack {
 
 		// Create network loadbalancer targeting our application loadbalancer
 		const nlbName = generateResourceName('nlb')
-		const nlbSGName = generateResourceName('nlb-secgroup')
 		const nlbListenerName = generateResourceName('nlb-listener');
 		const nlbTargetName = generateResourceName('nlb-targets');
+		const nlbSecurityGroupName = generateResourceName('nlb-secgroup');
+
+		const nlbSecurityGroup = new SecurityGroup(this, nlbSecurityGroupName, {
+			vpc,
+			securityGroupName: nlbSecurityGroupName,
+		});
+		// Allow inbound from API Gateway
+		nlbSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(80));
+
 		const nlb = new NetworkLoadBalancer(this, nlbName, {
 			loadBalancerName: nlbName,
 			vpc,
 			crossZoneEnabled: true,
-			securityGroups: [
-				new SecurityGroup(this, nlbSGName, {
-					vpc,
-					securityGroupName: nlbSGName,
-				})
-			],
+			securityGroups: [nlbSecurityGroup],
 		});
+
 		const nlbListener = nlb.addListener(nlbListenerName, { port: 80 });
 		nlbListener.addTargets(nlbTargetName, {
 			targets: [new AlbTarget(fargateService.loadBalancer, 80)],
 			port: 80,
 			healthCheck: {
 				path: healthCheckPath,
+				interval: Duration.seconds(60),
 			},
 		});
 
@@ -170,19 +175,21 @@ export class ApiStack extends Stack {
 			restApiName: apiName,
 			deployOptions: {
 				stageName: stageName(scope),
-				loggingLevel: MethodLoggingLevel.INFO,
 				dataTraceEnabled: true, // TODO Turn off once tested
 			},
 		});
 		api.root.addProxy({
 			defaultIntegration: new Integration({
 				type: IntegrationType.HTTP_PROXY,
+				//uri: `http://${nlb.loadBalancerDnsName}/{proxy}`,
 				integrationHttpMethod: 'ANY',
 				options: {
 					connectionType: ConnectionType.VPC_LINK,
 					vpcLink,
+					passthroughBehavior: PassthroughBehavior.WHEN_NO_MATCH,
 				},
 			}),
+			anyMethod: true,
 		}).addCorsPreflight({
 			allowOrigins: [webappUrl],
 			allowMethods: Cors.ALL_METHODS,
