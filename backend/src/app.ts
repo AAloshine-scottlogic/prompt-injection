@@ -76,10 +76,12 @@ app.use((req, _res, next) => {
 });
 
 app.use((req, res, next) => {
-	console.log('Request:', req.path, req.headers);
+	if (req.path !== '/health' && isProd) {
+		console.log('Request:', req.path, `secure=${req.secure}`, req.headers);
 	res.on('finish', () => {
 		console.log('Response:', req.path, res.getHeaders());
 	});
+	}
 	next();
 });
 

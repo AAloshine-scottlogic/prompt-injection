@@ -7,7 +7,8 @@
 	"scripts": {
 		"cdk:synth": "cdk synth -q \"*\"",
 		"cdk:deploy": "cdk deploy --app cdk.out --all",
-		"cdk:destroy": "cdk destroy --all",
+		"cdk:destroy": "cdk destroy",
+		"cdk:destroy:all": "cdk destroy --all",
 		"format": "prettier . --write",
 		"lint": "eslint . --ext .ts --fix"
 	},

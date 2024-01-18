@@ -1,9 +1,11 @@
 import {
+	AccessLogField,
+	AccessLogFormat,
 	ConnectionType,
 	Cors,
 	Integration,
 	IntegrationType,
-	PassthroughBehavior,
+	LogGroupLogDestination,
 	RestApi,
 	VpcLink
 } from 'aws-cdk-lib/aws-apigateway';
@@ -21,6 +23,7 @@ import { Construct } from 'constructs';
 import { join } from 'node:path';
 
 import { resourceName, stageName } from './resourceNamingUtils';
+import { LogGroup } from 'aws-cdk-lib/aws-logs';
 
 type ApiStackProps = StackProps & {
 	// userPool: UserPool;
@@ -51,7 +54,7 @@ export class ApiStack extends Stack {
 		const vpcName = generateResourceName('vpc');
 		const vpc = new Vpc(this, vpcName, {
 			vpcName,
-			restrictDefaultSecurityGroup: false, // TODO blog about this!
+			restrictDefaultSecurityGroup: false, // TODO blog this, or do we even need it?
 			maxAzs: 2,
 		});
 		const clusterName = generateResourceName('cluster');
@@ -68,7 +71,6 @@ export class ApiStack extends Stack {
 		const healthCheckPath = '/health';
 		const fargateServiceName = generateResourceName('fargate');
 		const loadBalancerName = generateResourceName('alb');
-		const loadBalancerLogName = generateResourceName('loadbalancer-logs');
 		const fargateService = new ApplicationLoadBalancedFargateService(
 			this,
 			fargateServiceName,
@@ -104,14 +106,8 @@ export class ApiStack extends Stack {
 		);
 		fargateService.targetGroup.configureHealthCheck({
 			path: healthCheckPath,
+			interval: Duration.seconds(30),
 		});
-		fargateService.loadBalancer.logAccessLogs(
-			new Bucket(this, loadBalancerLogName, {
-				bucketName: loadBalancerLogName,
-				autoDeleteObjects: true,
-				removalPolicy: RemovalPolicy.DESTROY,
-			})
-		);
 
 		// Hook up Cognito to load balancer
 		// https://stackoverflow.com/q/71124324
@@ -146,7 +142,6 @@ export class ApiStack extends Stack {
 		const nlb = new NetworkLoadBalancer(this, nlbName, {
 			loadBalancerName: nlbName,
 			vpc,
-			crossZoneEnabled: true,
 			securityGroups: [nlbSecurityGroup],
 		});
 
@@ -157,8 +152,20 @@ export class ApiStack extends Stack {
 			healthCheck: {
 				path: healthCheckPath,
 				interval: Duration.seconds(60),
+				healthyThresholdCount: 2,
+				unhealthyThresholdCount: 2,
 			},
 		});
+
+		// Load-balancer traffic logging
+		const loadBalancerLogName = generateResourceName('loadbalancer-logs');
+		const loadBalancerLogBucket = new Bucket(this, loadBalancerLogName, {
+			bucketName: loadBalancerLogName,
+			autoDeleteObjects: true,
+			removalPolicy: RemovalPolicy.DESTROY,
+		});
+		fargateService.loadBalancer.logAccessLogs(loadBalancerLogBucket, 'app-lb');
+		nlb.logAccessLogs(loadBalancerLogBucket, 'net-lb');
 
 		// Create an HTTP APIGateway with a VPCLink integrated with our network load balancer
 		const vpcLinkName = generateResourceName('vpclink');
@@ -171,22 +178,45 @@ export class ApiStack extends Stack {
 		});
 
 		const apiName = generateResourceName('api');
+		const apiLogGroupName = generateResourceName('api-logs');
 		const api = new RestApi(this, apiName, {
 			restApiName: apiName,
+			cloudWatchRole: true,
 			deployOptions: {
 				stageName: stageName(scope),
 				dataTraceEnabled: true, // TODO Turn off once tested
+				accessLogDestination: new LogGroupLogDestination(
+					new LogGroup(this, generateResourceName('api-logs'), {
+						removalPolicy: RemovalPolicy.DESTROY,
+						logGroupName: apiLogGroupName,
+					})
+				),
+				accessLogFormat: AccessLogFormat.custom(JSON.stringify({
+					requestId: AccessLogField.contextRequestId(),
+					protocol: AccessLogField.contextProtocol(),
+					method: AccessLogField.contextHttpMethod(),
+					path: AccessLogField.contextPath(),
+					domain: AccessLogField.contextDomainName(),
+					status: AccessLogField.contextIntegrationStatus(),
+				})),
 			},
 		});
 		api.root.addProxy({
+			defaultMethodOptions: {
+				requestParameters: {
+					'method.request.path.proxy': true, //TODO blog this!
+				},
+			},
 			defaultIntegration: new Integration({
 				type: IntegrationType.HTTP_PROXY,
-				//uri: `http://${nlb.loadBalancerDnsName}/{proxy}`,
+				uri: `http://${nlb.loadBalancerDnsName}/{proxy}`, //TODO blog this!
 				integrationHttpMethod: 'ANY',
 				options: {
 					connectionType: ConnectionType.VPC_LINK,
 					vpcLink,
-					passthroughBehavior: PassthroughBehavior.WHEN_NO_MATCH,
+					requestParameters: {
+						'integration.request.path.proxy': 'method.request.path.proxy', //TODO blog this!
+					},
 				},
 			}),
 			anyMethod: true,
@@ -196,7 +226,7 @@ export class ApiStack extends Stack {
 			// TODO Might not need the cookie headers, if allowCredentials=true
 			allowHeaders: ['X-Forwarded-For', 'X-Forwarded-Proto', 'Content-Type', 'Cookie'],
 			exposeHeaders: ['Set-Cookie'],
-			allowCredentials: true, // TODO Mention this in blog?
+			allowCredentials: true, // TODO blog this!
 		});
 
 		new CfnOutput(this, 'APIGatewayURL', { value: api.url });
