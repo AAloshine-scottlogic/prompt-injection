@@ -42,8 +42,10 @@ app.use(
 );
 
 // This doesn't work with APIGW's newer HTTP API, cos it's using Forwarded
-// request header, not X-Forwarded headers. Maybe try with NLB inbetween?
-app.set('trust proxy', true);
+// request header, not X-Forwarded headers.
+// It also doesn't work with NLB in between APIGW and ALB, cos X-Forwarded-Proto
+// has only one entry: "http"
+//app.set('trust proxy', 3);
 
 // use session storage - currently in-memory, but in future use Redis in prod builds
 const maxAge = 60 * 60 * 1000 * (isProd ? 1 : 8); //1 hour in prod, 8hrs in dev
@@ -57,9 +59,22 @@ const sessionOpts: session.SessionOptions = {
 	}),
 	cookie: {
 		maxAge,
-		// Different domains for UI and API in AWS, until we buy a domain...
+		/*
+			UI and API have different domains, until we buy a domain and put Route53
+			in front of both.
+			Currently this means we need to use a non-secure session cookie for it to
+			get all the way through to/from the server, but that will be forbidden in
+			most browsers in 2024 - see
+			https://developer.mozilla.org/en-US/blog/goodbye-third-party-cookies/
+			So, this workaround will soon break! The problem is that API Gateway uses
+			the new, standard Forwarded header to convey proxy details, whereas ALB
+			still uses non-standard but ubiquitous X-Forwarded- headers, so our node
+			server receives both sets of headers and ignores the Forwarded header
+			(which is our secure, trusted API Gateway proxy). Problem reported here:
+			https://repost.aws/questions/QUtBHMaz7IQ6aM4RCBMnJvgw/why-does-apigw-http-api-use-forwarded-header-while-other-services-still-use-x-forwarded-headers
+		*/
 		sameSite: isProd ? 'none' : 'strict',
-		secure: isProd,
+		secure: false, //isProd
 	},
 };
 
@@ -78,9 +93,9 @@ app.use((req, _res, next) => {
 app.use((req, res, next) => {
 	if (req.path !== '/health' && isProd) {
 		console.log('Request:', req.path, `secure=${req.secure}`, req.headers);
-	res.on('finish', () => {
-		console.log('Response:', req.path, res.getHeaders());
-	});
+		res.on('finish', () => {
+			console.log('Response:', req.path, res.getHeaders());
+		});
 	}
 	next();
 });
